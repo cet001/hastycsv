@@ -13,3 +13,4 @@ go run examples/example_1_read_from_stream.go
 ```bash
 go run examples/example_2_read_from_file.go
 ```
+
