@@ -1,3 +1,7 @@
+// Package hastycsv is fast, simple, and NOT-RFC-4180-COMPLIANT CSV reader.
+//
+// Take a look at README and code examples in https://github.com/cet001/hastycsv
+// for usage.
 package hastycsv
 
 import (
