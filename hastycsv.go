@@ -83,7 +83,7 @@ func (me *Reader) Read(r io.Reader, nextRecord func(i int, record []Field)) erro
 func ReadFile(csvFilePath string, delim byte, nextRecord func(i int, record []Field)) error {
 	f, err := os.Open(csvFilePath)
 	if err != nil {
-		return fmt.Errorf("Error opening '%v': %v", csvFilePath, err)
+		return err
 	}
 	defer f.Close()
 
