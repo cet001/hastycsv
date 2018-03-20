@@ -4,7 +4,7 @@ Fast, but not-fully-compliant (not even close!), CSV reader.
 
 # Usage
 
-To view/run an example of how to use this CSV reader, view and run the examples in this project's [examples/](./examples/) subdirectory.
+Take a look at the examples in this project's [examples/](./examples/) subdirectory.  And then run them!
 
 ```bash
 go run examples/example_1_read_from_stream.go
