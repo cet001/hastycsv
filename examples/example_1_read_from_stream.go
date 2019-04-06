@@ -7,15 +7,14 @@ import (
 )
 
 func main() {
-	r := strings.NewReader(`make|model|year|mpg
-Honda|Acura NSX|2017|18.1
+	r := strings.NewReader(`Honda|Acura NSX|2017|18.1
 Chevrolet|Corvette|2016|16.5
 BMW|M3|2015|18.7
 Audi|A3|2014|25.4`)
 
 	// Create our CSV reader and configure it to use '|' as the field delimiter
 	hastyCsvReader := hastycsv.NewReader()
-	hastyCsvReader.Delimiter = '|'
+	hastyCsvReader.Comma = '|'
 
 	err := hastyCsvReader.Read(r, func(i int, fields []hastycsv.Field) {
 		fmt.Printf("line %v: make=%v, model=%v, year=%v, mpg=%v\n", i,

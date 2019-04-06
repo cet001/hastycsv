@@ -29,13 +29,17 @@ func TestField_ToLower(t *testing.T) {
 		"!@#$%^&*()_+",
 	}
 
-	for _, value := range values {
-		assert.Equal(t, strings.ToLower(value), makeField(value).ToLower().String())
+	for i, value := range values {
+		assert.Equal(t,
+			strings.ToLower(value),
+			makeField(value).ToLower().String(),
+			"values[%v]", i,
+		)
 	}
 }
 
 func TestField_String(t *testing.T) {
-	testValues := []string{
+	values := []string{
 		"",
 		" ",
 		"a",
@@ -43,7 +47,7 @@ func TestField_String(t *testing.T) {
 		"ABC123",
 	}
 
-	for _, s := range testValues {
+	for _, s := range values {
 		field := makeField(s)
 		assert.Equal(t, s, field.String())
 	}
@@ -150,7 +154,7 @@ func TestSplitBytes(t *testing.T) {
 
 // Special case: split bytes into a record that contains only 1 field.  In this
 // case, even if the input string contains the delimiter field, the entire string
-// should get assinged to the record's single field.
+// should get assigned to the record's single field.
 func TestSplitBytes_recordWithOnlyOneField(t *testing.T) {
 	record := make([]Field, 1)
 	splitBytes([]byte("foo|bar"), '|', record)
@@ -175,14 +179,15 @@ func TestRead(t *testing.T) {
 		{name: "mary", age: 35, weight: 125.1},
 	}
 
-	data := "name|age|weight"
+	personRecords := []string{}
 	for _, p := range persons {
-		data += fmt.Sprintf("\n%v|%v|%v", p.name, p.age, p.weight)
+		personRecords = append(personRecords, fmt.Sprintf("%v|%v|%v", p.name, p.age, p.weight))
 	}
+	in := strings.NewReader(strings.Join(personRecords, "\n"))
 
 	r := NewReader()
-	r.Delimiter = '|'
-	err := r.Read(strings.NewReader(data), func(i int, fields []Field) {
+	r.Comma = '|'
+	err := r.Read(in, func(i int, fields []Field) {
 		expectedPerson := persons[i-1]
 		assert.Equal(t, expectedPerson.name, fields[0].String())
 		assert.Equal(t, expectedPerson.age, fields[1].Uint32())
@@ -192,15 +197,24 @@ func TestRead(t *testing.T) {
 	assert.Nil(t, err)
 }
 
+func TestRead_InvalidComma(t *testing.T) {
+	r := NewReader()
+	in := strings.NewReader(`10|20|30`)
+
+	for _, invalidCommaChar := range []byte{'\r', '\n'} {
+		r.Comma = invalidCommaChar
+		err := r.Read(in, func(i int, record []Field) { /* no-op */ })
+		assert.EqualError(t, err, `Comma delimiter cannot be \r or \n`)
+	}
+}
+
 func TestRead_parsingError(t *testing.T) {
-	// Create CSV input stream in which 1st line contains an unparseable field
-	// (in this case, the 'age' field)
-	in := strings.NewReader(`name|age|weight
-John|123xyz|12.5
+	// Create CSV input stream in which line 1 contains an unparseable Uint32 field.
+	in := strings.NewReader(`John|123xyz|12.5
 Mary|25|130.5`)
 
 	r := NewReader()
-	r.Delimiter = '|'
+	r.Comma = '|'
 	err := r.Read(in, func(i int, fields []Field) {
 		fields[0].String()
 		fields[1].Uint32() // This call will halt csv reading and return an error in the 1st line
@@ -216,10 +230,10 @@ func TestReadFile(t *testing.T) {
 	if err != nil {
 		assert.Fail(t, "Error creating temp file: %v", err)
 	}
-	defer os.Remove(tmpCsvFile.Name())                 // delete the temp file when this functio n exits
-	fmt.Fprintln(tmpCsvFile, "firstName,lastName,age") // header row
-	fmt.Fprintln(tmpCsvFile, "mary,jones,35")          // row 1
-	fmt.Fprintln(tmpCsvFile, "bill,anderson,40")       // row 2
+	defer os.Remove(tmpCsvFile.Name()) // delete the temp file when this function exits
+
+	fmt.Fprintln(tmpCsvFile, "mary,jones,35")    // row 1
+	fmt.Fprintln(tmpCsvFile, "bill,anderson,40") // row 2
 
 	err = ReadFile(tmpCsvFile.Name(), ',', func(i int, rec []Field) {
 		assert.Equal(t, 3, len(rec))
@@ -253,7 +267,7 @@ func BenchmarkRead_stringValues(b *testing.B) {
 	r := strings.NewReader(buf.String())
 
 	csvReader := NewReader()
-	csvReader.Delimiter = '|'
+	csvReader.Comma = '|'
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -274,7 +288,7 @@ func BenchmarkRead_intValues(b *testing.B) {
 	r := strings.NewReader(buf.String())
 
 	csvReader := NewReader()
-	csvReader.Delimiter = '|'
+	csvReader.Comma = '|'
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -296,22 +310,18 @@ func BenchmarkGoCsv_Read_stringValues(b *testing.B) {
 
 	golangReader := csv.NewReader(r)
 	golangReader.Comma = '|'
+	golangReader.ReuseRecord = true
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
 		r.Reset(buf.String())
 		count := 0
-		isHeaderRecord := true
 		for {
 			fields, err := golangReader.Read()
 			if err == io.EOF {
 				break
 			}
 			require.Nil(b, err)
-			if isHeaderRecord { // skip the header record
-				isHeaderRecord = false
-				continue
-			}
 			for _, field := range fields {
 				tmpString = field
 			}
@@ -326,22 +336,18 @@ func BenchmarkGoCsv_Read_intValues(b *testing.B) {
 
 	golangReader := csv.NewReader(r)
 	golangReader.Comma = '|'
+	golangReader.ReuseRecord = true
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
 		r.Reset(buf.String())
 		count := 0
-		isHeaderRecord := true
 		for {
 			fields, err := golangReader.Read()
 			if err == io.EOF {
 				break
 			}
 			require.Nil(b, err)
-			if isHeaderRecord { // skip the header record
-				isHeaderRecord = false
-				continue
-			}
 			for _, field := range fields {
 				v, err := strconv.Atoi(field)
 				require.Nil(b, err)
@@ -360,18 +366,14 @@ func createCsvRecords() *bytes.Buffer {
 
 	buf := bytes.NewBuffer(make([]byte, 0, recordCount))
 
-	// Write header record
-	for i := 0; i < fieldCount; i++ {
-		record[i] = fmt.Sprintf("field_%v", i)
-	}
-	buf.WriteString(strings.Join(record, "|"))
-
-	// Write the rest of the records
 	for i := 0; i < recordCount; i++ {
+		if i > 0 {
+			buf.WriteString("\n")
+		}
+
 		for j := 0; j < fieldCount; j++ {
 			record[j] = fmt.Sprintf("%v", baseValue+i)
 		}
-		buf.WriteString("\n")
 		buf.WriteString(strings.Join(record, "|"))
 	}
 
