@@ -7,6 +7,10 @@ go:
 script:
     - env GO111MODULE=on make
 
+os:
+    - linux
+    - osx
+
 notifications:
     email:
         recipients:
