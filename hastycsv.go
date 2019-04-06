@@ -14,30 +14,37 @@ import (
 	"unsafe"
 )
 
-// Needed by Field.Uint32() parser
+// Needed by Field.Uint32() parser.
 var base10exp = []uint32{1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000}
 
 // Reads records from a CSV-encoded file or io.Reader.
 type Reader struct {
-	// Delimiter is the CSV field delimiter. It is set to ',' by NewReader().
-	Delimiter byte
-	fields    []Field
-	Row       int
-	err       error
+	// Comma is the field delimiter.
+	// It is set to comma (',') by NewReader.
+	// Comma cannot be \r or \n.
+	Comma byte
+
+	fields []Field
+	row    int
+	err    error
 }
 
 // Returns a new Reader whose Delimiter is set to the comma character (',').
 func NewReader() *Reader {
 	return &Reader{
-		Delimiter: ',',
+		Comma: ',',
 	}
 }
 
 func (me *Reader) Read(r io.Reader, nextRecord func(i int, record []Field)) error {
+	if me.Comma == '\r' || me.Comma == '\n' {
+		return fmt.Errorf(`Comma delimiter cannot be \r or \n`)
+	}
+
 	var fields []Field
 	isFirstRecord := true
-	delim := me.Delimiter
-	me.Row = 0
+	delim := me.Comma
+	me.row = 0
 
 	lineScanner := bufio.NewScanner(r)
 	for lineScanner.Scan() {
@@ -53,24 +60,23 @@ func (me *Reader) Read(r io.Reader, nextRecord func(i int, record []Field)) erro
 				field.reader = me
 			}
 			isFirstRecord = false
-			continue
 		}
 
-		me.Row++
+		me.row++
 
 		if err := splitBytes(b, delim, fields); err != nil {
-			return fmt.Errorf("Line %v: %v: \"%v\"", me.Row, err, string(b))
+			return fmt.Errorf("Line %v: %v: \"%v\"", me.row, err, string(b))
 		}
 
-		nextRecord(me.Row, fields)
+		nextRecord(me.row, fields)
 
 		if me.err != nil {
-			return fmt.Errorf("Line %v: %v", me.Row, me.err)
+			return fmt.Errorf("Line %v: %v", me.row, me.err)
 		}
 	}
 
 	if me.err != nil {
-		return fmt.Errorf("Line %v: %v", me.Row, me.err)
+		return fmt.Errorf("Line %v: %v", me.row, me.err)
 	}
 
 	if err := lineScanner.Err(); err != nil {
@@ -80,7 +86,7 @@ func (me *Reader) Read(r io.Reader, nextRecord func(i int, record []Field)) erro
 	return nil
 }
 
-func ReadFile(csvFilePath string, delim byte, nextRecord func(i int, record []Field)) error {
+func ReadFile(csvFilePath string, comma byte, nextRecord func(i int, record []Field)) error {
 	f, err := os.Open(csvFilePath)
 	if err != nil {
 		return err
@@ -88,8 +94,8 @@ func ReadFile(csvFilePath string, delim byte, nextRecord func(i int, record []Fi
 	defer f.Close()
 
 	r := NewReader()
-	r.Delimiter = delim
-	return r.Read(f, nextRecord)
+	r.Comma = comma
+	return r.Read(bufio.NewReaderSize(f, 32*1024), nextRecord)
 }
 
 // Represents a field (encoded as a UTF-8 string) within a CSV record.
