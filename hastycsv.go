@@ -15,7 +15,7 @@ import (
 )
 
 // Needed by Field.Uint32() parser.
-var base10exp = []uint32{1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000}
+var base10exp = []uint64{1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000}
 
 // Reads records from a CSV-encoded file or io.Reader.
 type Reader struct {
@@ -123,7 +123,7 @@ func (me Field) ToLower() Field {
 
 // Parses this field as a Uint32.
 func (me Field) Uint32() uint32 {
-	v := uint32(0)
+	v := uint64(0)
 	d := len(me.data)
 	for _, b := range me.data {
 		if b < '0' || b > '9' {
@@ -133,9 +133,17 @@ func (me Field) Uint32() uint32 {
 			return 0
 		}
 		d--
-		v += uint32(b-'0') * base10exp[d]
+		v += uint64(b-'0') * base10exp[d]
 	}
-	return v
+
+	if v > 4294967295 {
+		if me.reader.err == nil {
+			me.reader.err = fmt.Errorf("%v overflows uint32", string(me.data))
+		}
+		return 0
+	}
+
+	return uint32(v)
 }
 
 // Parses this field as a float32.

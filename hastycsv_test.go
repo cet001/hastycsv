@@ -81,6 +81,7 @@ func TestField_Uint32_parseError(t *testing.T) {
 		"x",
 		"abc",
 		" ",
+		"4294967296", //uint32 overflow
 	}
 
 	for _, badlyFormattedInt := range badlyFormattedInts {
