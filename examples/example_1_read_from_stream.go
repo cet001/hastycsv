@@ -16,13 +16,14 @@ Audi|A3|2014|25.4`)
 	hastyCsvReader := hastycsv.NewReader()
 	hastyCsvReader.Comma = '|'
 
-	err := hastyCsvReader.Read(r, func(i int, fields []hastycsv.Field) {
+	err := hastyCsvReader.Read(r, func(i int, fields []hastycsv.Field) error {
 		fmt.Printf("line %v: make=%v, model=%v, year=%v, mpg=%v\n", i,
 			fields[0].String(),
 			fields[1].String(),
 			fields[2].Uint32(),
 			fields[3].Float32(),
 		)
+		return nil // To halt reading, return an error here.
 	})
 
 	if err != nil {
