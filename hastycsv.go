@@ -17,6 +17,11 @@ import (
 // Needed by Field.Uint32() parser.
 var base10exp = []uint64{1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000}
 
+// Definition of a callback function that serves as a sequential record iterator.
+// Read() and ReadFile() will stop reading the input records if this function
+// returns an error.
+type Next func(i int, record []Field) error
+
 // Reads records from a CSV-encoded file or io.Reader.
 type Reader struct {
 	// Comma is the field delimiter.
@@ -36,7 +41,7 @@ func NewReader() *Reader {
 	}
 }
 
-func (me *Reader) Read(r io.Reader, nextRecord func(i int, record []Field)) error {
+func (me *Reader) Read(r io.Reader, nextRecord Next) error {
 	if me.Comma == '\r' || me.Comma == '\n' {
 		return fmt.Errorf(`Comma delimiter cannot be \r or \n`)
 	}
@@ -68,10 +73,12 @@ func (me *Reader) Read(r io.Reader, nextRecord func(i int, record []Field)) erro
 			return fmt.Errorf("Line %v: %v: \"%v\"", me.row, err, string(b))
 		}
 
-		nextRecord(me.row, fields)
+		callbackErr := nextRecord(me.row, fields)
 
 		if me.err != nil {
 			return fmt.Errorf("Line %v: %v", me.row, me.err)
+		} else if callbackErr != nil {
+			return fmt.Errorf("Line %v: %v", me.row, callbackErr)
 		}
 	}
 
@@ -86,7 +93,7 @@ func (me *Reader) Read(r io.Reader, nextRecord func(i int, record []Field)) erro
 	return nil
 }
 
-func ReadFile(csvFilePath string, comma byte, nextRecord func(i int, record []Field)) error {
+func ReadFile(csvFilePath string, comma byte, nextRecord Next) error {
 	f, err := os.Open(csvFilePath)
 	if err != nil {
 		return err

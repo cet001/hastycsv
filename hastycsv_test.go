@@ -188,14 +188,40 @@ func TestRead(t *testing.T) {
 
 	r := NewReader()
 	r.Comma = '|'
-	err := r.Read(in, func(i int, fields []Field) {
+	err := r.Read(in, func(i int, fields []Field) error {
 		expectedPerson := persons[i-1]
 		assert.Equal(t, expectedPerson.name, fields[0].String())
 		assert.Equal(t, expectedPerson.age, fields[1].Uint32())
 		assert.Equal(t, expectedPerson.weight, fields[2].Float32())
+		return nil
 	})
 
 	assert.Nil(t, err)
+}
+
+func TestRead_abortReading(t *testing.T) {
+	records := []string{
+		"a0|b0|c0",
+		"a1|b1|c1",
+		"a2|b2|c2",
+		"a3|b3|c3",
+		"a4|b4|c4",
+	}
+	in := strings.NewReader(strings.Join(records, "\n"))
+
+	r := NewReader()
+	r.Comma = '|'
+	receivedValues := []string{}
+	err := r.Read(in, func(i int, fields []Field) error {
+		receivedValues = append(receivedValues, fields[0].String())
+		if fields[0].String() == "a2" {
+			return fmt.Errorf("Abort!")
+		}
+		return nil
+	})
+
+	assert.EqualError(t, err, "Line 3: Abort!")
+	assert.Equal(t, []string{"a0", "a1", "a2"}, receivedValues)
 }
 
 func TestRead_InvalidComma(t *testing.T) {
@@ -204,7 +230,7 @@ func TestRead_InvalidComma(t *testing.T) {
 
 	for _, invalidCommaChar := range []byte{'\r', '\n'} {
 		r.Comma = invalidCommaChar
-		err := r.Read(in, func(i int, record []Field) { /* no-op */ })
+		err := r.Read(in, func(i int, record []Field) error { return nil })
 		assert.EqualError(t, err, `Comma delimiter cannot be \r or \n`)
 	}
 }
@@ -216,10 +242,11 @@ Mary|25|130.5`)
 
 	r := NewReader()
 	r.Comma = '|'
-	err := r.Read(in, func(i int, fields []Field) {
+	err := r.Read(in, func(i int, fields []Field) error {
 		fields[0].String()
 		fields[1].Uint32() // This call will halt csv reading and return an error in the 1st line
 		fields[2].Float32()
+		return nil
 	})
 
 	assert.EqualError(t, err, "Line 1: Field \"123xyz\" contains non-numeric character 'x'")
@@ -236,7 +263,7 @@ func TestReadFile(t *testing.T) {
 	fmt.Fprintln(tmpCsvFile, "mary,jones,35")    // row 1
 	fmt.Fprintln(tmpCsvFile, "bill,anderson,40") // row 2
 
-	err = ReadFile(tmpCsvFile.Name(), ',', func(i int, rec []Field) {
+	err = ReadFile(tmpCsvFile.Name(), ',', func(i int, rec []Field) error {
 		assert.Equal(t, 3, len(rec))
 		switch i {
 		case 1:
@@ -250,13 +277,14 @@ func TestReadFile(t *testing.T) {
 		default:
 			assert.Fail(t, "unexpected row index: %v", i)
 		}
+		return nil
 	})
 
 	assert.Nil(t, err)
 }
 
 func TestReadFile_nonexistentFile(t *testing.T) {
-	err := ReadFile("NONEXISTENT_FILE.TXT", ',', func(i int, rec []Field) {})
+	err := ReadFile("NONEXISTENT_FILE.TXT", ',', func(i int, rec []Field) error { return nil })
 	assert.NotNil(t, err)
 }
 
@@ -274,11 +302,12 @@ func BenchmarkRead_stringValues(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		r.Reset(buf.String())
 		count := 0
-		err := csvReader.Read(r, func(i int, fields []Field) {
+		err := csvReader.Read(r, func(i int, fields []Field) error {
 			for _, field := range fields {
 				tmpString = field.String()
 			}
 			count++
+			return nil
 		})
 		assert.Nil(b, err)
 	}
@@ -295,11 +324,12 @@ func BenchmarkRead_intValues(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		r.Reset(buf.String())
 		count := 0
-		err := csvReader.Read(r, func(i int, fields []Field) {
+		err := csvReader.Read(r, func(i int, fields []Field) error {
 			for _, field := range fields {
 				tmpUint32 = field.Uint32()
 			}
 			count++
+			return nil
 		})
 		assert.Nil(b, err)
 	}
