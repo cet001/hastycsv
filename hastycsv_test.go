@@ -19,6 +19,13 @@ func makeField(s string) Field {
 	return Field{reader: NewReader(), data: []byte(s)}
 }
 
+func TestField_IsEmpty(t *testing.T) {
+	assert.True(t, makeField("").IsEmpty())
+	assert.False(t, makeField(" ").IsEmpty())
+	assert.False(t, makeField("abc").IsEmpty())
+	assert.False(t, makeField("123").IsEmpty())
+}
+
 func TestField_ToLower(t *testing.T) {
 	values := []string{
 		"",
