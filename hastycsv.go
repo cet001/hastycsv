@@ -111,6 +111,11 @@ type Field struct {
 	data   []byte
 }
 
+// Returns true if this field is empty.
+func (me Field) IsEmpty() bool {
+	return len(me.data) == 0
+}
+
 // Returns this field as a string.
 func (me Field) String() string {
 	return string(me.data)
