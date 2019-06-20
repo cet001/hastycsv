@@ -45,6 +45,12 @@ func TestField_ToLower(t *testing.T) {
 	}
 }
 
+func TestField_Bytes(t *testing.T) {
+	assert.Equal(t, []byte{}, makeField("").Bytes())
+	assert.Equal(t, []byte{65, 66, 67}, makeField("ABC").Bytes())
+
+}
+
 func TestField_String(t *testing.T) {
 	values := []string{
 		"",
@@ -88,7 +94,8 @@ func TestField_Uint32_parseError(t *testing.T) {
 		"x",
 		"abc",
 		" ",
-		"4294967296", //uint32 overflow
+		"4294967296",      //uint32 overflow (by 1)
+		"999999999999999", // uint32 overflow (by a lot)
 	}
 
 	for _, badlyFormattedInt := range badlyFormattedInts {
@@ -256,7 +263,7 @@ Mary|25|130.5`)
 		return nil
 	})
 
-	assert.EqualError(t, err, "Line 1: Field \"123xyz\" contains non-numeric character 'x'")
+	assert.EqualError(t, err, "Line 1: Can't parse field as uint32: \"123xyz\" contains non-numeric character 'x'")
 }
 
 func TestReadFile(t *testing.T) {
