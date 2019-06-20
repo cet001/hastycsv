@@ -9,13 +9,27 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"unsafe"
 )
 
-// Needed by Field.Uint32() parser.
-var base10exp = []uint64{1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000}
+// Needed by ParseUint32() for better performance.
+var base10exp = []uint64{
+	1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000,
+	1000000000,
+	10000000000,
+	100000000000,
+	1000000000000,
+	10000000000000,
+	100000000000000,
+	1000000000000000,
+	10000000000000000,
+	100000000000000000,
+	100000000000000000,
+	1000000000000000000,
+}
 
 // Definition of a callback function that serves as a sequential record iterator.
 // Read() and ReadFile() will stop reading the input records if this function
@@ -116,6 +130,11 @@ func (me Field) IsEmpty() bool {
 	return len(me.data) == 0
 }
 
+// Returns the backing byte slice of this field.
+func (me Field) Bytes() []byte {
+	return me.data
+}
+
 // Returns this field as a string.
 func (me Field) String() string {
 	return string(me.data)
@@ -135,27 +154,14 @@ func (me Field) ToLower() Field {
 
 // Parses this field as a Uint32.
 func (me Field) Uint32() uint32 {
-	v := uint64(0)
-	d := len(me.data)
-	for _, b := range me.data {
-		if b < '0' || b > '9' {
-			if me.reader.err == nil {
-				me.reader.err = fmt.Errorf("Field \"%v\" contains non-numeric character '%v'", string(me.data), string(b))
-			}
-			return 0
-		}
-		d--
-		v += uint64(b-'0') * base10exp[d]
-	}
-
-	if v > 4294967295 {
+	i, err := ParseUint32(me.data)
+	if err != nil {
 		if me.reader.err == nil {
-			me.reader.err = fmt.Errorf("%v overflows uint32", string(me.data))
+			me.reader.err = fmt.Errorf(`Can't parse field as uint32: %v`, err)
 		}
-		return 0
 	}
 
-	return uint32(v)
+	return i
 }
 
 // Parses this field as a float32.
@@ -168,6 +174,24 @@ func (me Field) Float32() float32 {
 		return 0
 	}
 	return float32(f)
+}
+
+func ParseUint32(data []byte) (uint32, error) {
+	v := uint64(0)
+	d := len(data)
+	for _, ch := range data {
+		if ch < '0' || ch > '9' {
+			return 0, fmt.Errorf(`"%v" contains non-numeric character '%v'`, string(data), string(ch))
+		}
+		d--
+		v += uint64(ch-'0') * base10exp[d]
+	}
+
+	if v > math.MaxUint32 {
+		return 0, fmt.Errorf(`"%v" overflows uint32`, string(data))
+	}
+
+	return uint32(v), nil
 }
 
 // Returns the string representation of this Field without creating a memory allocation.
