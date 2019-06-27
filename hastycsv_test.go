@@ -14,9 +14,93 @@ import (
 	"testing"
 )
 
-// Test helper
-func makeField(s string) Field {
-	return Field{reader: NewReader(), data: []byte(s)}
+func TestNewReader(t *testing.T) {
+	r := NewReader()
+	assert.Equal(t, byte(','), r.Comma)
+}
+
+func TestReader_Read(t *testing.T) {
+	type Person struct {
+		name   string
+		age    uint32
+		weight float32
+	}
+
+	persons := []Person{
+		{name: "bill", age: 30, weight: 154.5},
+		{name: "mary", age: 35, weight: 125.1},
+	}
+
+	personRecords := []string{}
+	for _, p := range persons {
+		personRecords = append(personRecords, fmt.Sprintf("%v|%v|%v", p.name, p.age, p.weight))
+	}
+	in := strings.NewReader(strings.Join(personRecords, "\n"))
+
+	r := NewReader()
+	r.Comma = '|'
+	err := r.Read(in, func(i int, fields []Field) error {
+		expectedPerson := persons[i-1]
+		assert.Equal(t, expectedPerson.name, fields[0].String())
+		assert.Equal(t, expectedPerson.age, fields[1].Uint32())
+		assert.Equal(t, expectedPerson.weight, fields[2].Float32())
+		return nil
+	})
+
+	assert.Nil(t, err)
+}
+
+func TestReader_Read_abortReading(t *testing.T) {
+	records := []string{
+		"a0|b0|c0",
+		"a1|b1|c1",
+		"a2|b2|c2",
+		"a3|b3|c3",
+		"a4|b4|c4",
+	}
+	in := strings.NewReader(strings.Join(records, "\n"))
+
+	r := NewReader()
+	r.Comma = '|'
+	receivedValues := []string{}
+	err := r.Read(in, func(i int, fields []Field) error {
+		receivedValues = append(receivedValues, fields[0].String())
+		if fields[0].String() == "a2" {
+			return fmt.Errorf("Abort!")
+		}
+		return nil
+	})
+
+	assert.EqualError(t, err, "Line 3: Abort!")
+	assert.Equal(t, []string{"a0", "a1", "a2"}, receivedValues)
+}
+
+func TestReader_Read_InvalidComma(t *testing.T) {
+	r := NewReader()
+	in := strings.NewReader(`10|20|30`)
+
+	for _, invalidCommaChar := range []byte{'\r', '\n'} {
+		r.Comma = invalidCommaChar
+		err := r.Read(in, func(i int, record []Field) error { return nil })
+		assert.EqualError(t, err, `Comma delimiter cannot be \r or \n`)
+	}
+}
+
+func TestReader_Read_parsingError(t *testing.T) {
+	// Create CSV input stream in which line 1 contains an unparseable Uint32 field.
+	in := strings.NewReader(`John|123xyz|12.5
+Mary|25|130.5`)
+
+	r := NewReader()
+	r.Comma = '|'
+	err := r.Read(in, func(i int, fields []Field) error {
+		fields[0].String()
+		fields[1].Uint32() // This call will halt csv reading and return an error in the 1st line
+		fields[2].Float32()
+		return nil
+	})
+
+	assert.EqualError(t, err, "Line 1: Can't parse field as uint32: \"123xyz\" contains non-numeric character 'x'")
 }
 
 func TestField_IsEmpty(t *testing.T) {
@@ -138,6 +222,42 @@ func TestField_Float32_parseError(t *testing.T) {
 	}
 }
 
+func TestReadFile(t *testing.T) {
+	// Create a temp csv file and add a header plus 2 records.
+	tmpCsvFile, err := ioutil.TempFile("", "TestReadRecords")
+	if err != nil {
+		assert.Fail(t, "Error creating temp file: %v", err)
+	}
+	defer os.Remove(tmpCsvFile.Name()) // delete the temp file when this function exits
+
+	fmt.Fprintln(tmpCsvFile, "mary,jones,35")    // row 1
+	fmt.Fprintln(tmpCsvFile, "bill,anderson,40") // row 2
+
+	err = ReadFile(tmpCsvFile.Name(), ',', func(i int, rec []Field) error {
+		assert.Equal(t, 3, len(rec))
+		switch i {
+		case 1:
+			assert.Equal(t, "mary", rec[0].String())
+			assert.Equal(t, "jones", rec[1].String())
+			assert.Equal(t, "35", rec[2].String())
+		case 2:
+			assert.Equal(t, "bill", rec[0].String())
+			assert.Equal(t, "anderson", rec[1].String())
+			assert.Equal(t, "40", rec[2].String())
+		default:
+			assert.Fail(t, "unexpected row index: %v", i)
+		}
+		return nil
+	})
+
+	assert.Nil(t, err)
+}
+
+func TestReadFile_nonexistentFile(t *testing.T) {
+	err := ReadFile("NONEXISTENT_FILE.TXT", ',', func(i int, rec []Field) error { return nil })
+	assert.NotNil(t, err)
+}
+
 func TestSplitBytes(t *testing.T) {
 	testData := []string{
 		"",
@@ -182,128 +302,75 @@ func TestSplitBytes_wrongFieldCount(t *testing.T) {
 	assert.NotNil(t, splitBytes([]byte("blah"), '|', record))
 }
 
-func TestRead(t *testing.T) {
-	type Person struct {
-		name   string
-		age    uint32
-		weight float32
+func TestParseUint32(t *testing.T) {
+	testCases := []struct {
+		Input          string
+		ExpectedOutput uint32
+		ExpectedErr    string
+	}{
+		// Happy paths
+		{Input: "0", ExpectedOutput: uint32(0)},
+		{Input: "", ExpectedOutput: uint32(0)},
+		{Input: "1", ExpectedOutput: uint32(1)},
+		{Input: "4294967295", ExpectedOutput: uint32(4294967295)},
+		// Error paths
+		{Input: "4294967296", ExpectedErr: "overflows uint32"},
+		{Input: "9999999999", ExpectedErr: "overflows uint32"},
+		{Input: "9223372036854775808", ExpectedErr: "too long to be parsed as a uint32"},
+		{Input: "999999999999999999999999999", ExpectedErr: "too long to be parsed as a uint32"},
+		{Input: "-1", ExpectedErr: `"-1" contains non-numeric character '-'`},
+		{Input: "1.2345", ExpectedErr: `"1.2345" contains non-numeric character '.'`},
+		{Input: "xyz", ExpectedErr: `"xyz" contains non-numeric character 'x'`},
 	}
 
-	persons := []Person{
-		{name: "bill", age: 30, weight: 154.5},
-		{name: "mary", age: 35, weight: 125.1},
-	}
-
-	personRecords := []string{}
-	for _, p := range persons {
-		personRecords = append(personRecords, fmt.Sprintf("%v|%v|%v", p.name, p.age, p.weight))
-	}
-	in := strings.NewReader(strings.Join(personRecords, "\n"))
-
-	r := NewReader()
-	r.Comma = '|'
-	err := r.Read(in, func(i int, fields []Field) error {
-		expectedPerson := persons[i-1]
-		assert.Equal(t, expectedPerson.name, fields[0].String())
-		assert.Equal(t, expectedPerson.age, fields[1].Uint32())
-		assert.Equal(t, expectedPerson.weight, fields[2].Float32())
-		return nil
-	})
-
-	assert.Nil(t, err)
-}
-
-func TestRead_abortReading(t *testing.T) {
-	records := []string{
-		"a0|b0|c0",
-		"a1|b1|c1",
-		"a2|b2|c2",
-		"a3|b3|c3",
-		"a4|b4|c4",
-	}
-	in := strings.NewReader(strings.Join(records, "\n"))
-
-	r := NewReader()
-	r.Comma = '|'
-	receivedValues := []string{}
-	err := r.Read(in, func(i int, fields []Field) error {
-		receivedValues = append(receivedValues, fields[0].String())
-		if fields[0].String() == "a2" {
-			return fmt.Errorf("Abort!")
+	for i, testCase := range testCases {
+		testCaseLabel := fmt.Sprintf("testCase[%v]", i)
+		v, err := ParseUint32([]byte(testCase.Input))
+		if testCase.ExpectedErr == "" {
+			if assert.Nil(t, err, testCaseLabel) {
+				assert.Equal(t, testCase.ExpectedOutput, v, testCaseLabel)
+			}
+		} else {
+			if assert.NotNil(t, err, testCaseLabel) {
+				assert.Contains(t, err.Error(), testCase.ExpectedErr, testCaseLabel)
+			}
 		}
-		return nil
-	})
-
-	assert.EqualError(t, err, "Line 3: Abort!")
-	assert.Equal(t, []string{"a0", "a1", "a2"}, receivedValues)
-}
-
-func TestRead_InvalidComma(t *testing.T) {
-	r := NewReader()
-	in := strings.NewReader(`10|20|30`)
-
-	for _, invalidCommaChar := range []byte{'\r', '\n'} {
-		r.Comma = invalidCommaChar
-		err := r.Read(in, func(i int, record []Field) error { return nil })
-		assert.EqualError(t, err, `Comma delimiter cannot be \r or \n`)
 	}
-}
-
-func TestRead_parsingError(t *testing.T) {
-	// Create CSV input stream in which line 1 contains an unparseable Uint32 field.
-	in := strings.NewReader(`John|123xyz|12.5
-Mary|25|130.5`)
-
-	r := NewReader()
-	r.Comma = '|'
-	err := r.Read(in, func(i int, fields []Field) error {
-		fields[0].String()
-		fields[1].Uint32() // This call will halt csv reading and return an error in the 1st line
-		fields[2].Float32()
-		return nil
-	})
-
-	assert.EqualError(t, err, "Line 1: Can't parse field as uint32: \"123xyz\" contains non-numeric character 'x'")
-}
-
-func TestReadFile(t *testing.T) {
-	// Create a temp csv file and add a header plus 2 records.
-	tmpCsvFile, err := ioutil.TempFile("", "TestReadRecords")
-	if err != nil {
-		assert.Fail(t, "Error creating temp file: %v", err)
-	}
-	defer os.Remove(tmpCsvFile.Name()) // delete the temp file when this function exits
-
-	fmt.Fprintln(tmpCsvFile, "mary,jones,35")    // row 1
-	fmt.Fprintln(tmpCsvFile, "bill,anderson,40") // row 2
-
-	err = ReadFile(tmpCsvFile.Name(), ',', func(i int, rec []Field) error {
-		assert.Equal(t, 3, len(rec))
-		switch i {
-		case 1:
-			assert.Equal(t, "mary", rec[0].String())
-			assert.Equal(t, "jones", rec[1].String())
-			assert.Equal(t, "35", rec[2].String())
-		case 2:
-			assert.Equal(t, "bill", rec[0].String())
-			assert.Equal(t, "anderson", rec[1].String())
-			assert.Equal(t, "40", rec[2].String())
-		default:
-			assert.Fail(t, "unexpected row index: %v", i)
-		}
-		return nil
-	})
-
-	assert.Nil(t, err)
-}
-
-func TestReadFile_nonexistentFile(t *testing.T) {
-	err := ReadFile("NONEXISTENT_FILE.TXT", ',', func(i int, rec []Field) error { return nil })
-	assert.NotNil(t, err)
 }
 
 var tmpString string
 var tmpUint32 uint32
+
+func BenchmarkParseUint32(b *testing.B) {
+	values := [][]byte{
+		[]byte("1234567890"),
+		[]byte("111111111"),
+		[]byte("999999999"),
+		[]byte("12345"),
+	}
+
+	for n := 0; n < b.N; n++ {
+		for _, value := range values {
+			tmpUint32, _ = ParseUint32(value)
+		}
+	}
+}
+
+func BenchmarkGoParseInt(b *testing.B) {
+	values := []string{
+		"1234567890",
+		"111111111",
+		"999999999",
+		"12345",
+	}
+
+	for n := 0; n < b.N; n++ {
+		for _, value := range values {
+			x, _ := strconv.ParseInt(value, 0, 32)
+			tmpUint32 = uint32(x)
+		}
+	}
+}
 
 func BenchmarkRead_stringValues(b *testing.B) {
 	buf := createCsvRecords()
@@ -403,6 +470,12 @@ func BenchmarkGoCsv_Read_intValues(b *testing.B) {
 	}
 }
 
+// Test helper
+func makeField(s string) Field {
+	return Field{reader: NewReader(), data: []byte(s)}
+}
+
+// Test helper
 func createCsvRecords() *bytes.Buffer {
 	const recordCount = 1000000
 	const fieldCount = 5
