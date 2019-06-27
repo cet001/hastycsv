@@ -176,9 +176,14 @@ func (me Field) Float32() float32 {
 	return float32(f)
 }
 
+// ParseUint32() parses an ascii byte array into a uint32 value.
 func ParseUint32(data []byte) (uint32, error) {
-	v := uint64(0)
 	d := len(data)
+	if d > 10 { // 2^32 is 10 digits long
+		return 0, fmt.Errorf(`"%v" is too long to be parsed as a uint32`, string(data))
+	}
+
+	v := uint64(0)
 	for _, ch := range data {
 		if ch < '0' || ch > '9' {
 			return 0, fmt.Errorf(`"%v" contains non-numeric character '%v'`, string(data), string(ch))
